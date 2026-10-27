@@ -56,8 +56,30 @@ def buffer_recommendation(df: pd.DataFrame, q: float = 90) -> dict:
     d = df.dropna(subset=["error", "forecast"])
     if d.empty:
         return {"q": q, "buffer_mw": None}
-    buf = float(np.percentile(np.clip(d["error"].to_numpy(), 0, None), q))
+    e, f = d["error"].to_numpy(), d["forecast"].to_numpy()
+    buf = float(np.percentile(np.clip(e, 0, None), q))
+    # Bias-aware view (added fields only): remove the average over-forecast first, then size a
+    # P{q} buffer on what is left. Bias and buffer are estimated on the same month (in-sample).
+    bias = float(e.mean())
+    resid_buf = float(np.percentile(np.clip(e - bias, 0, None), q))
     return {"q": q, "buffer_mw": buf,
-            "mean_forecast": float(d["forecast"].mean()),
-            "mean_conservative_wind": float(np.clip(d["forecast"] - buf, 0, None).mean()),
+            "mean_forecast": float(f.mean()),
+            "mean_conservative_wind": float(np.clip(f - buf, 0, None).mean()),
+            "bias_mw": bias,
+            "mean_bias_corrected_forecast": float(np.clip(f - bias, 0, None).mean()),
+            "residual_buffer_mw": resid_buf,
+            "mean_conservative_wind_bias_aware": float(np.clip(f - bias - resid_buf, 0, None).mean()),
             "note": "Indicative only: empirical percentile of January 2026 errors; not a guarantee."}
+
+
+def cutoff_comparison(tables: dict[str, pd.DataFrame]) -> list[dict]:
+    """Headline error metrics for the same slots under different decision cutoffs."""
+    out = []
+    for cutoff, df in tables.items():
+        s = summarise(df.dropna(subset=["error"]))
+        row = {"cutoff": cutoff, "n": s["n"]}
+        if s["n"]:
+            row.update(mae=s["mae"], rmse=s["rmse"], bias=s["bias"], p90_abs=s["abs_error_pct"]["p90"],
+                       mean_horizon_h=float(df["horizon_h"].mean()))
+        out.append(row)
+    return out

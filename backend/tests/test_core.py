@@ -72,3 +72,59 @@ def test_duplicates_and_chunks():
     assert len(elexon.normalise_forecasts(rows)) == 1
     w = elexon.chunk_windows(T("2026-01-01").to_pydatetime(), T("2026-01-09").to_pydatetime(), 3)
     assert len(w) == 3 and w[0][1] == w[1][0] and w[-1][1] == T("2026-01-09")
+
+
+def test_half_hour_actuals_not_scored_against_hourly_forecasts():
+    f = fc([("2026-01-10 00:00", "2026-01-09 07:30", 100)])
+    a = pd.DataFrame({"startTime": [T("2026-01-10 00:00"), T("2026-01-10 00:30")], "actual": [90.0, 80.0]})
+    t = decision_table(f, a, date(2026, 1, 10), date(2026, 1, 10), time(9))
+    assert len(t) == 24 and t.error.dropna().tolist() == [10.0]
+
+
+def test_bias_aware_buffer_fields():
+    df = pd.DataFrame({"forecast": [110.0, 120.0, 130.0, 140.0], "actual": [100.0] * 4})
+    df["error"] = df.forecast - df.actual  # 10, 20, 30, 40 -> bias 25
+    b = metrics.buffer_recommendation(df, 90)
+    assert b["bias_mw"] == 25
+    assert b["mean_bias_corrected_forecast"] == 100
+    assert b["residual_buffer_mw"] == float(np.percentile([0, 0, 5, 15], 90))
+    assert b["buffer_mw"] == float(np.percentile([10, 20, 30, 40], 90))  # existing field unchanged
+
+
+def test_cutoff_comparison_uses_only_forecasts_before_each_cutoff():
+    f = fc([("2026-01-10 12:00", "2026-01-09 07:30", 120),
+            ("2026-01-10 12:00", "2026-01-09 09:30", 105)])
+    a = pd.DataFrame({"startTime": [T("2026-01-10 12:00")], "actual": [100.0]})
+    tabs = {c: decision_table(f, a, date(2026, 1, 10), date(2026, 1, 10), time.fromisoformat(c))
+            for c in ("09:00", "09:30")}
+    rows = {r["cutoff"]: r for r in metrics.cutoff_comparison(tabs)}
+    assert rows["09:00"]["mae"] == 20 and rows["09:30"]["mae"] == 5
+
+
+def test_month_data_fetched_once(monkeypatch):
+    import asyncio
+    calls = []
+
+    async def fake_fetch(path, start, end, days, extra):
+        calls.append(path)
+        return []
+
+    monkeypatch.setattr(elexon, "_fetch", fake_fetch)
+    elexon._memo.clear()
+    s, e = T("2025-12-29").to_pydatetime(), T("2026-01-31").to_pydatetime()
+
+    async def run():
+        await asyncio.gather(*(elexon.month_forecasts(s, e) for _ in range(5)))
+        await elexon.month_actuals(s, e)
+
+    asyncio.run(run())
+    elexon._memo.clear()
+    assert calls == ["/datasets/WINDFOR/stream", "/datasets/FUELHH/stream"]
+
+
+def test_single_request_per_dataset_for_january():
+    from app import config
+    assert len(elexon.chunk_windows(T("2025-12-29").to_pydatetime(), T("2026-01-31").to_pydatetime(),
+                                    config.FORECAST_CHUNK_DAYS)) == 1
+    assert len(elexon.chunk_windows(T("2026-01-01").to_pydatetime(), T("2026-02-01").to_pydatetime(),
+                                    config.ACTUALS_CHUNK_DAYS)) == 1

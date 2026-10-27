@@ -38,20 +38,38 @@ def _records(df: pd.DataFrame) -> list[dict]:
     return d.astype(object).where(d.notna(), None).to_dict("records")
 
 
-async def _table(start, end, cutoff, hmin, hmax) -> pd.DataFrame:
-    _check(start, end)
+async def _month():
+    """Whole January window, fetched once per process (one Elexon request per dataset)."""
+    lookback = timedelta(days=config.FORECAST_LOOKBACK_DAYS)
     try:
-        # forecasts published up to 2 days before the first delivery day are relevant
-        fc = await elexon.load_forecasts(_dt(start) - timedelta(days=3), _dt(end))
-        ac = await elexon.load_actuals(_dt(start), _dt(end))
+        fc = await elexon.month_forecasts(_dt(config.JAN_START) - lookback, _dt(config.JAN_END))
+        ac = await elexon.month_actuals(_dt(config.JAN_START), _dt(config.JAN_END))
     except RuntimeError as e:
         raise HTTPException(502, str(e))
-    df = decision_table(fc, ac, start, end, _cutoff(cutoff))
+    return fc, ac
+
+
+def _forecast_window(fc: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
+    """Same eligibility window as before: published within [start - lookback, end], for target days."""
+    lo = _dt(start) - timedelta(days=config.FORECAST_LOOKBACK_DAYS)
+    return fc[(fc.publishTime >= lo) & (fc.publishTime <= _dt(end))
+              & (fc.startTime >= _dt(start)) & (fc.startTime < _dt(end) + timedelta(days=1))]
+
+
+def _filter_horizon(df: pd.DataFrame, hmin, hmax) -> pd.DataFrame:
     if hmin is not None:
         df = df[df["horizon_h"] >= hmin]
     if hmax is not None:
         df = df[df["horizon_h"] <= hmax]
     return df
+
+
+async def _table(start, end, cutoff, hmin, hmax) -> pd.DataFrame:
+    _check(start, end)
+    cut = _cutoff(cutoff)
+    fc, ac = await _month()
+    df = decision_table(_forecast_window(fc, start, end), ac, start, end, cut)
+    return _filter_horizon(df, hmin, hmax)
 
 
 @app.get("/api/health")
@@ -62,10 +80,7 @@ def health():
 @app.get("/api/actuals")
 async def actuals(start: date = Query(config.JAN_START), end: date = Query(config.JAN_END)):
     _check(start, end)
-    try:
-        df = await elexon.load_actuals(_dt(start), _dt(end))
-    except RuntimeError as e:
-        raise HTTPException(502, str(e))
+    _, df = await _month()
     df = df[(df.startTime >= _dt(start)) & (df.startTime < _dt(end) + timedelta(days=1))]
     return _records(df)
 
@@ -74,11 +89,8 @@ async def actuals(start: date = Query(config.JAN_START), end: date = Query(confi
 async def forecasts(start: date = Query(config.JAN_START), end: date = Query(config.JAN_END),
                     publish_cutoff: datetime | None = Query(None, description="Only forecasts published <= this (UTC)")):
     _check(start, end)
-    try:
-        df = await elexon.load_forecasts(_dt(start) - timedelta(days=3), _dt(end))
-    except RuntimeError as e:
-        raise HTTPException(502, str(e))
-    df = df[(df.startTime >= _dt(start)) & (df.startTime < _dt(end) + timedelta(days=1))]
+    fc, _ = await _month()
+    df = _forecast_window(fc, start, end)
     if publish_cutoff:
         df = df[df.publishTime <= pd.Timestamp(publish_cutoff, tz=UTC) if publish_cutoff.tzinfo is None
                 else df.publishTime <= pd.Timestamp(publish_cutoff)]
@@ -104,6 +116,11 @@ async def get_metrics(start: date = Query(config.JAN_START), end: date = Query(c
                       horizon_max: float | None = None, buffer_percentile: float = Query(90, ge=50, le=99.9)):
     df = await _table(start, end, cutoff, horizon_min, horizon_max)
     ok = df.dropna(subset=["error"])
+    # Same slots scored under a few alternative cutoffs (added field; existing fields unchanged).
+    chosen = _cutoff(cutoff).strftime("%H:%M")
+    others = sorted({chosen, *(c.strip() for c in config.COMPARE_CUTOFFS if c.strip())})
+    compare = {c: (df if c == chosen else await _table(start, end, c, horizon_min, horizon_max))
+               for c in others}
     return {
         "cutoff_time_utc": _cutoff(cutoff).strftime("%H:%M"),
         "summary": metrics.summarise(ok),
@@ -114,4 +131,5 @@ async def get_metrics(start: date = Query(config.JAN_START), end: date = Query(c
         "buffer": metrics.buffer_recommendation(ok, buffer_percentile),
         "coverage": {"slots": int(len(df)), "with_forecast": int(df["forecast"].notna().sum()),
                      "with_actual": int(df["actual"].notna().sum()), "scored": int(len(ok))},
+        "cutoff_comparison": metrics.cutoff_comparison(compare),
     }

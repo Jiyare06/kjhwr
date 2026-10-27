@@ -20,8 +20,12 @@ def select_latest(forecasts: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame
 
 
 def day_slots(day: date) -> pd.DatetimeIndex:
+    """24 hourly slots. WINDFOR is hourly (startTime always on :00, verified on January 2026 data),
+    so the FUELHH :30 half-hours have no forecast to score against and are not used.
+    Forecasts are never interpolated to :30."""
     start = pd.Timestamp(datetime.combine(day, time(0), tzinfo=UTC))
     return pd.date_range(start, periods=24, freq="60min")
+
 
 def add_horizon(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -31,7 +35,7 @@ def add_horizon(df: pd.DataFrame) -> pd.DataFrame:
 
 def decision_table(forecasts: pd.DataFrame, actuals: pd.DataFrame, start: date, end: date,
                    cutoff_time: time) -> pd.DataFrame:
-    """One row per 30-min slot over [start, end] using the D-1 cutoff forecast, joined to actuals."""
+    """One row per hourly slot over [start, end] using the D-1 cutoff forecast, joined to actuals."""
     parts = []
     d = start
     while d <= end:

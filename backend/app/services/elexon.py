@@ -70,6 +70,31 @@ async def load_forecasts(start: datetime, end: datetime) -> pd.DataFrame:
     return normalise_forecasts(rows)
 
 
+# In-process memo: every API request reuses one fetch of the fixed January window instead of
+# issuing its own date-specific Elexon calls (which also defeated the disk cache).
+_memo: dict[str, pd.DataFrame] = {}
+_lock = asyncio.Lock()
+
+
+async def _memoised(name: str, loader) -> pd.DataFrame:
+    if name in _memo:
+        return _memo[name]
+    async with _lock:  # concurrent first requests share one download
+        if name not in _memo:
+            _memo[name] = await loader()
+    return _memo[name]
+
+
+async def month_forecasts(start: datetime, end: datetime) -> pd.DataFrame:
+    """All forecasts for the fixed window [start, end] (publishTime), fetched once per process."""
+    return await _memoised("forecasts", lambda: load_forecasts(start, end))
+
+
+async def month_actuals(start: datetime, end: datetime) -> pd.DataFrame:
+    """All WIND actuals for the fixed window, fetched once per process."""
+    return await _memoised("actuals", lambda: load_actuals(start, end))
+
+
 def normalise_actuals(rows: list[dict]) -> pd.DataFrame:
     cols = ["startTime", "actual"]
     if not rows:
