@@ -5,12 +5,18 @@ export interface Row { startTime: string; publishTime: string | null; forecast: 
 export interface Params { start: string; end: string; cutoff: string; horizonMin?: string; horizonMax?: string; }
 export interface Group { n: number; mae: number; rmse: number; bias: number; hour?: number; day?: string; horizon?: string; }
 export interface Metrics {
-  summary: { n: number; mae?: number; rmse?: number; bias?: number; mape?: number | null;
+  cutoff_time_utc?: string;
+  summary: { n: number; mae?: number; rmse?: number; bias?: number; mape?: number | null; mean_actual?: number;
     abs_error_pct?: Record<string, number>; over_forecast_pct?: Record<string, number> };
   by_hour: Group[]; by_day: Group[]; by_horizon: Group[];
   histogram: { from: number; to: number; count: number }[];
-  buffer: { q: number; buffer_mw: number | null; mean_forecast?: number; mean_conservative_wind?: number; note?: string };
+  buffer: { q: number; buffer_mw: number | null; mean_forecast?: number; mean_conservative_wind?: number; note?: string;
+    // bias-aware fields (newer backends only; optional so an older backend still renders)
+    bias_mw?: number; mean_bias_corrected_forecast?: number; residual_buffer_mw?: number;
+    mean_conservative_wind_bias_aware?: number };
   coverage: { slots: number; with_forecast: number; with_actual: number; scored: number };
+  cutoff_comparison?: { cutoff: string; n: number; mae?: number; rmse?: number; bias?: number;
+    p90_abs?: number; mean_horizon_h?: number }[];
 }
 
 function qs(p: Params, extra: Record<string, string> = {}) {
