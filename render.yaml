@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: wind-forecast-monitor-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: CORS_ORIGINS
+        value: "https://YOUR-FRONTEND.vercel.app"

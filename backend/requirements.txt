@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pandas>=2.3.3,<3
+httpx
+pytest
+pytest-asyncio

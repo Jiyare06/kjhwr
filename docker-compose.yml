@@ -1,0 +1,13 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      CACHE_DIR: /data/cache
+    volumes: [ "wfm-cache:/data/cache" ]
+    ports: [ "8000:8000" ]
+  frontend:
+    build: ./frontend
+    ports: [ "3000:80" ]
+    depends_on: [ backend ]
+volumes:
+  wfm-cache:
