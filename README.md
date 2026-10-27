@@ -17,6 +17,43 @@ Day-ahead wind forecast monitor for a UK energy utility that buys power one day 
 | \|Error\| P50 / P90 / P95 / P99 | 1,758.5 / 4,306.4 / 5,350.9 / 6,139.5 MW |
 | Mean actual wind | 11,581 MW |
 
+## Files and directories
+```
+.
+├── docker-compose.yml        # runs backend (:8000) + frontend (:3000) together
+├── render.yaml               # Render blueprint for the backend (Docker)
+├── backend/                  # Python 3.12 + FastAPI
+│   ├── Dockerfile            # backend image (used by Render and docker compose)
+│   ├── Procfile              # Heroku alternative start command
+│   ├── requirements.txt
+│   ├── pytest.ini
+│   ├── app/
+│   │   ├── main.py           # API endpoints, date/cutoff validation, response shaping
+│   │   ├── config.py         # January window, default cutoff, Elexon URL, chunk sizes (env-overridable)
+│   │   └── services/
+│   │       ├── elexon.py     # Elexon FUELHH/WINDFOR fetch, retry, memory + file cache, normalisation
+│   │       ├── decision.py   # decision-time forecast selection (no look-ahead) and forecast/actual join
+│   │       └── metrics.py    # MAE, RMSE, bias, MAPE, percentiles, buffer, cutoff comparison
+│   └── tests/test_core.py    # 13 unit tests
+├── frontend/                 # React 18 + TypeScript + Vite + Recharts
+│   ├── Dockerfile            # Node build, served by nginx
+│   ├── nginx.conf            # serves the SPA, proxies /api to the backend container
+│   ├── vercel.json           # Vercel build + SPA rewrites
+│   ├── .env.example          # VITE_API_URL (backend URL for Vercel)
+│   └── src/
+│       ├── App.tsx           # controls, tabs, data loading, CSV export
+│       ├── api.ts            # typed API client
+│       ├── format.ts         # UTC time and MW formatting
+│       ├── theme.css         # design tokens and layout
+│       └── components/
+│           ├── ForecastView.tsx  # "Forecast for delivery day" tab
+│           ├── AccuracyView.tsx  # "Accuracy & buffer" tab
+│           └── Ui.tsx            # KPI, card, loading/error/empty states
+└── docs/
+    ├── CLIENT_PITCH.md       # client presentation script with January 2026 results
+    └── TECH_REVIEW.md        # architecture, design decisions, formulas, testing, limitations
+```
+
 ## Run
 ```bash
 docker compose up --build         # UI http://localhost:3000 · API http://localhost:8000/docs
